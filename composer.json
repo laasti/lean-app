@@ -1,0 +1,31 @@
+{
+    "name": "laasti/lean-app",
+    "description": "A lean PHP framework that covers the basics",
+    "keywords": ["framework", "lean", "slim"],
+    "type": "project",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Sonia Marquette",
+            "email": "contact@nebulousweb.com"
+        }
+    ],
+    "require": {
+        "laasti/application": "dev-develop",
+        "laasti/peels": "dev-master#95e145f",
+        "laasti/directions": "dev-master#0c7f5a8",
+        "zendframework/zend-diactoros": "1.3.3",
+        "league/container": "2.0.3",
+        "monolog/monolog": "1.17.2",
+        "league/booboo": "1.0.0"
+    },
+    "require-dev": {
+    },
+    "suggest": {
+    },
+    "autoload": {
+        "psr-4": {
+            "Laasti\\LeanApp\\": "src/"
+        }
+    }
+}

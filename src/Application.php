@@ -5,16 +5,15 @@ namespace Laasti\LeanApp;
 
 use Laasti\Directions\Route;
 use Laasti\Http\Application as CoreApp;
-use Laasti\Http\HttpKernel;
 use League\Container\Container;
 use Psr\Http\Message\RequestInterface;
 use Psr\Http\Message\ResponseInterface;
-use Zend\Diactoros\Response;
-use Zend\Diactoros\ServerRequest;
+use Zend\Diactoros\Response;;
 use Zend\Diactoros\ServerRequestFactory;
 
 class Application
 {
+    const CLASS_METHOD_EXTRACTOR = "/^(.+)::(.+)$/";
     protected $coreApp;
 
     public function __construct(CoreApp $app)
@@ -27,7 +26,8 @@ class Application
         $container = new Container;
         $container->share('container', $container);
         $container->share('Interop\Container\ContainerInterface', $container);
-        $container->share('error_formatter', 'Laasti\Core\Exceptions\PrettyBooBooFormatter')->withArguments([[], new HttpKernel(function() {}), New ServerRequest(), new Response]);
+        $container->add('error_formatter.kernel', 'Laasti\Http\HttpKernel')->withArgument('peels.exceptions');
+        $container->share('error_formatter', 'Laasti\Core\Exceptions\PrettyBooBooFormatter')->withArguments(['error_formatter.kernel', 'request', 'response']);
         $container->add('config', [
             'booboo' => [
                 'pretty_page' => 'error_formatter',
@@ -44,7 +44,11 @@ class Application
                 'http' => [
                     'runner' => 'Laasti\Peels\Http\HttpRunner',
                     'middlewares' => []
-                ]
+                ],
+                'exceptions' => [
+                    'runner' => 'Laasti\Peels\Http\HttpRunner',
+                    'middlewares' => []
+                ],
             ],
             'directions' => [
                 'default' => [
@@ -53,15 +57,11 @@ class Application
                 ]
             ]
         ]);
+        $container->share('kernel', 'Laasti\Http\HttpKernel')->withArgument('peels.http');
         $container->addServiceProvider('Laasti\Directions\Providers\LeagueDirectionsProvider');
         $container->addServiceProvider('Laasti\Peels\Providers\LeaguePeelsProvider');
         $container->addServiceProvider('Laasti\Core\Providers\MonologProvider');
-        $kernel = new HttpKernel(function($request, $response) use ($container) {
-           $runner = $container->get('peels.http')->create();
-           return $runner($request, $response);
-        });
-        $container->share('kernel');
-        $coreApp = new CoreApp($container, $kernel);
+        $coreApp = new CoreApp($container);
 
         return new static($coreApp);
     }
@@ -74,23 +74,24 @@ class Application
         if (is_null($response)) {
             $response = new Response;
         }
-        $this->getContainer()->share('request', $request);
-        $this->getContainer()->share('response', $response);
-
+        //Default routing middleware should be the last middleware added
+        $this->container()->get('peels.http')->unshift('directions.default::find');
+        $this->container()->get('peels.http')->push('directions.default::dispatch');
+        
         $this->coreApp->run($request, $response);
     }
     
-    public function getContainer()
+    public function container()
     {
         return $this->coreApp->getContainer();
     }
 
-    public function getConfigArray()
+    public function allConfig()
     {
         return $this->coreApp->getConfigArray();
     }
 
-    public function getConfig($key, $default = null)
+    public function config($key, $default = null)
     {
         return $this->coreApp->getConfig($key, $default);
     }
@@ -100,14 +101,20 @@ class Application
         return $this->coreApp->setConfig($key, $value);
     }
 
-    public function getLogger()
+    public function logger()
     {
         return $this->coreApp->getLogger();
     }
 
     public function middleware($middleware)
     {
-        $this->getContainer()->get('peels.http')->push($middleware);
+        $this->container()->get('peels.http')->push($middleware);
+        return $this;
+    }
+
+    public function exception($exceptionClass, $handler)
+    {
+        $this->container()->get('error_formatter')->setHandler($exceptionClass, $this->resolve($handler));
         return $this;
     }
 
@@ -120,12 +127,24 @@ class Application
      */
     public function route($method, $route, $callable)
     {
-        return $this->getContainer()->get('directions.default')->add($method, $route, $callable);
+        return $this->container()->get('directions.default')->add($method, $route, $callable);
     }
 
-    public function handle($error, $callable)
+    protected function resolve($callableMiddleware)
     {
-        $this->getContainer()->get('error_formatter')->add($error, $callable);
-        return $this;
+        $matches = [];
+        if (is_string($callableMiddleware) && preg_match(self::CLASS_METHOD_EXTRACTOR, $callableMiddleware, $matches)) {
+            list($matchedString, $class, $method) = $matches;
+            if ($this->container()->has($class)) {
+                return [$this->container()->get($class), $method];
+            }
+        } else if (is_string($callableMiddleware) && $this->container()->has($callableMiddleware)) {
+            return $this->container()->get($callableMiddleware);
+        }
+
+        if (is_callable($callableMiddleware)) {
+            return $callableMiddleware;
+        }
+        throw new InvalidArgumentException('Callable not resolvable: '.(is_object($callableMiddleware) ? get_class($callableMiddleware) : $callableMiddleware));
     }
 }
